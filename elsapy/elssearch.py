@@ -21,12 +21,13 @@ class ElsSearch():
         'scopus',
     ]
 
-    def __init__(self, query, index):
+    def __init__(self, start, query, index):
         """Initializes a search object with a query and target index."""
         self.query = query
         self.index = index
+        self.start = start
         self._cursor_supported = (index in self._cursored_indexes)
-        self._uri = self._base_url + self.index + '?query=' + url_encode(
+        self._uri = self._base_url + self.index + '?start='+str(start)+'&subscribed=false&query=' + url_encode(
                 self.query)
         self.results_df = pd.DataFrame()
 
@@ -86,22 +87,30 @@ class ElsSearch():
             return self.num_res >= 5000
 
     
-    def execute(self, els_client = None, get_all = False):
+    def execute(self, els_client = None, get_all = False, runs = 1):
         """Executes the search. If get_all = False (default), this retrieves
             the default number of results specified for the API. If
             get_all = True, multiple API calls will be made to iteratively get 
             all results for the search, up to a maximum of 5,000."""
         ## TODO: add exception handling
+        i = 1
         api_response = els_client.exec_request(self._uri)
         self._tot_num_res = int(api_response['search-results']['opensearch:totalResults'])
         self._results = api_response['search-results']['entry']
+
         if get_all is True:
-            while (self.num_res < self.tot_num_res) and not self._upper_limit_reached():
-                for e in api_response['search-results']['link']:
-                    if e['@ref'] == 'next':
-                        next_url = e['@href']
-                api_response = els_client.exec_request(next_url)
-                self._results += api_response['search-results']['entry']
+            while (self.num_res < self.tot_num_res) and i < runs and not self._upper_limit_reached():
+                next_url = ""
+                try:
+                    for e in api_response['search-results']['link']:
+                        if e['@ref'] == 'next':
+                            next_url = e['@href']
+                    if next_url != "":
+                        api_response = els_client.exec_request(next_url)
+                        self._results += api_response['search-results']['entry']
+                except:
+                    pass
+                i += 1
         with open('dump.json', 'w') as f:
             f.write(json.dumps(self._results))
         self.results_df = recast_df(pd.DataFrame(self._results))
